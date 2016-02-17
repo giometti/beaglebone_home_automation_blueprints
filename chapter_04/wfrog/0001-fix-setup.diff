@@ -1,0 +1,12 @@
+Index: wflogger/setup.py
+===================================================================
+--- wflogger/setup.py	(revision 973)
++++ wflogger/setup.py	(working copy)
+@@ -35,6 +35,7 @@
+         self.logger.debug('Current settings file: '+str(source_file))
+         self.logger.debug('New settings file:'+target_file)
+         defs = yaml.load( file(settings_def_file, 'r') )
++	source = None
+         if source_file is not None:
+             source = yaml.load( file(source_file, 'r') )
+         if source == None:

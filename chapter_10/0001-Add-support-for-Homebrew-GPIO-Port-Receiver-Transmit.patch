@@ -1,0 +1,704 @@
+From be816108417ce82c7114ebd578ac32a45aef934a Mon Sep 17 00:00:00 2001
+From: Rodolfo Giometti <giometti@linux.it>
+Date: Sun, 11 Oct 2015 08:43:49 +0200
+Subject: [PATCH 1/1] Add support for Homebrew GPIO Port Receiver/Transmitter
+
+Signed-off-by: Rodolfo Giometti <giometti@linux.it>
+---
+ patch.sh                                           |   7 +
+ ...s-lirc-add-GPIO-Port-Receiver-Transmitter.patch | 633 +++++++++++++++++++++
+ patches/defconfig                                  |  13 +-
+ 3 files changed, 652 insertions(+), 1 deletion(-)
+ create mode 100644 patches/bbb-habp/0001-drivers-lirc-add-GPIO-Port-Receiver-Transmitter.patch
+
+diff --git a/patch.sh b/patch.sh
+index f95d438..d5d3a60 100644
+--- a/patch.sh
++++ b/patch.sh
+@@ -206,6 +206,11 @@ saucy () {
+ 	${git} "${DIR}/patches/saucy/0003-saucy-disable-stack-protector.patch"
+ }
+ 
++bbb_habp () {
++	echo "dir: bbb-habp"
++	${git} "${DIR}/patches/bbb-habp/0001-drivers-lirc-add-GPIO-Port-Receiver-Transmitter.patch"
++}
++
+ ###
+ #arm
+ deassert_hard_reset
+@@ -226,6 +231,8 @@ boards
+ 
+ saucy
+ 
++bbb_habp
++
+ packaging_setup () {
+ 	cp -v "${DIR}/3rdparty/packaging/builddeb" "${DIR}/KERNEL/scripts/package"
+ 	git commit -a -m 'packaging: sync with mainline' -s
+diff --git a/patches/bbb-habp/0001-drivers-lirc-add-GPIO-Port-Receiver-Transmitter.patch b/patches/bbb-habp/0001-drivers-lirc-add-GPIO-Port-Receiver-Transmitter.patch
+new file mode 100644
+index 0000000..505c4c9
+--- /dev/null
++++ b/patches/bbb-habp/0001-drivers-lirc-add-GPIO-Port-Receiver-Transmitter.patch
+@@ -0,0 +1,633 @@
++From 6798730cb3f99de603e3cbd9bb895b728143c5d4 Mon Sep 17 00:00:00 2001
++From: Rodolfo Giometti <giometti@linux.it>
++Date: Sun, 11 Oct 2015 07:55:57 +0200
++Subject: [PATCH 1/1] drivers lirc: add GPIO Port Receiver/Transmitter
++
++Signed-off-by: Rodolfo Giometti <giometti@linux.it>
++---
++ drivers/staging/media/lirc/Kconfig     |   6 +
++ drivers/staging/media/lirc/Makefile    |   1 +
++ drivers/staging/media/lirc/lirc_gpio.c | 582 +++++++++++++++++++++++++++++++++
++ 3 files changed, 589 insertions(+)
++ create mode 100644 drivers/staging/media/lirc/lirc_gpio.c
++
++diff --git a/drivers/staging/media/lirc/Kconfig b/drivers/staging/media/lirc/Kconfig
++index e60a59f..cdd3ea8 100644
++--- a/drivers/staging/media/lirc/Kconfig
+++++ b/drivers/staging/media/lirc/Kconfig
++@@ -38,6 +38,12 @@ config LIRC_PARALLEL
++ 	help
++ 	  Driver for Homebrew Parallel Port Receivers
++ 
+++config LIRC_GPIO
+++	tristate "Homebrew GPIO Port Receiver/Transmitter"
+++	depends on LIRC
+++	help
+++	 Driver for Homebrew Receiver/Transmitter using generic GPIOs.
+++
++ config LIRC_SASEM
++ 	tristate "Sasem USB IR Remote"
++ 	depends on LIRC && USB
++diff --git a/drivers/staging/media/lirc/Makefile b/drivers/staging/media/lirc/Makefile
++index b90fcab..7ddaf68 100644
++--- a/drivers/staging/media/lirc/Makefile
+++++ b/drivers/staging/media/lirc/Makefile
++@@ -7,6 +7,7 @@ obj-$(CONFIG_LIRC_BT829)	+= lirc_bt829.o
++ obj-$(CONFIG_LIRC_IGORPLUGUSB)	+= lirc_igorplugusb.o
++ obj-$(CONFIG_LIRC_IMON)		+= lirc_imon.o
++ obj-$(CONFIG_LIRC_PARALLEL)	+= lirc_parallel.o
+++obj-$(CONFIG_LIRC_GPIO)		+= lirc_gpio.o
++ obj-$(CONFIG_LIRC_SASEM)	+= lirc_sasem.o
++ obj-$(CONFIG_LIRC_SERIAL)	+= lirc_serial.o
++ obj-$(CONFIG_LIRC_SIR)		+= lirc_sir.o
++diff --git a/drivers/staging/media/lirc/lirc_gpio.c b/drivers/staging/media/lirc/lirc_gpio.c
++new file mode 100644
++index 0000000..99da1d80
++--- /dev/null
+++++ b/drivers/staging/media/lirc/lirc_gpio.c
++@@ -0,0 +1,582 @@
+++﻿/*
+++ * lirc_gpio.c - LIRC driver for generic GPIO
+++ *               (C) Copyright 2015 Rodolfo Giometti <giometti@enneenne.com>
+++ *
+++ * Based on lirc_bbb.c by MrMaxx <mrmaxx93@hotmail.com>
+++ *
+++ * lirc_gpio - Device driver that records pulse/pause-lengths (space-lengths)
+++ * 	       (just like the lirc_serial driver does) between GPIO interrupt
+++ *	       events on a generic GPIO capable board.
+++ *
+++ */
+++
+++#undef DEBUG
+++#define pr_fmt(fmt)			LIRC_GPIO_NAME ": " fmt
+++
+++#include <linux/init.h>
+++#include <linux/module.h>
+++#include <linux/errno.h>
+++#include <linux/err.h>
+++#include <linux/interrupt.h>
+++#include <linux/clk.h>
+++#include <linux/io.h>
+++#include <linux/sched.h>
+++#include <linux/kernel.h>
+++#include <linux/leds.h>
+++#include <linux/time.h>
+++#include <linux/string.h>
+++#include <linux/delay.h>
+++#include <linux/platform_device.h>
+++#include <linux/irq.h>
+++#include <linux/input.h>
+++#include <linux/gpio_keys.h>
+++#include <linux/cpu.h>
+++#include <linux/spinlock.h>
+++#include <linux/gpio.h>
+++#include <media/lirc.h>
+++#include <media/lirc_dev.h>
+++
+++#define LIRC_GPIO_NAME			"lirc_gpio"
+++#define RBUF_LEN			256
+++#define LIRC_TRANSMITTER_LATENCY	256
+++
+++#ifndef MAX_UDELAY_MS
+++#  define MAX_UDELAY_US			5000
+++#else
+++#  define MAX_UDELAY_US			(MAX_UDELAY_MS * 1000)
+++#endif
+++
+++/*
+++ * Module parameters
+++ */
+++
+++/* Set the default GPIO input pin */
+++static int gpio_in = -1;
+++MODULE_PARM_DESC(gpio_in, "GPIO input/receiver pin number "
+++			 "(warning: it MUST be an interrupt capable pin!)");
+++module_param(gpio_in, int, S_IRUGO);
+++
+++/* Set the default GPIO output pin */
+++static int gpio_out = -1;
+++MODULE_PARM_DESC(gpio_out, "GPIO output/transmitter pin number");
+++module_param(gpio_out, int, S_IRUGO);
+++
+++/* Set the sense mode: -1 = auto, 0 = active high, 1 = active low */
+++static int sense = -1;
+++MODULE_PARM_DESC(sense, "Override autodetection of IR receiver circuit: "
+++			"0 = active high, 1 = active low (default -1 = auto)");
+++module_param(sense, int, S_IRUGO);
+++
+++/* Use softcarrier by default */
+++static unsigned int softcarrier = 1;
+++MODULE_PARM_DESC(softcarrier, "Software carrier: 0 = off, 1 = on (default on)");
+++module_param(softcarrier, uint, S_IRUGO);
+++
+++/*
+++ * Global variables
+++ */
+++
+++static struct platform_device *lirc_gpio_dev;
+++static struct timeval lasttv = { 0, 0 };
+++static struct lirc_buffer rbuf;
+++static DEFINE_SPINLOCK(lock);
+++
+++/* Initialized/set in init_timing_params() */
+++static unsigned int freq = 38000;
+++static unsigned int duty_cycle = 50;
+++static unsigned long period;
+++static unsigned long pulse_width;
+++static unsigned long space_width;
+++
+++static void safe_udelay(unsigned long usecs)
+++{
+++	while (usecs > MAX_UDELAY_US) {
+++		udelay(MAX_UDELAY_US);
+++		usecs -= MAX_UDELAY_US;
+++	}
+++	udelay(usecs);
+++}
+++
+++static int init_timing_params(unsigned int new_duty_cycle,
+++	unsigned int new_freq)
+++{
+++	/*
+++	 * period, pulse/space width are kept with 8 binary places -
+++	 * IE multiplied by 256.
+++	 */
+++	if (256 * 1000000L / new_freq * new_duty_cycle / 100 <=
+++	    LIRC_TRANSMITTER_LATENCY)
+++		return -EINVAL;
+++	if (256 * 1000000L / new_freq * (100 - new_duty_cycle) / 100 <=
+++	    LIRC_TRANSMITTER_LATENCY)
+++		return -EINVAL;
+++	duty_cycle = new_duty_cycle;
+++	freq = new_freq;
+++	period = 256 * 1000000L / freq;
+++	pulse_width = period * duty_cycle / 100;
+++	space_width = period - pulse_width;
+++	pr_debug("in init_timing_params, freq=%d pulse=%ld, "
+++		"space=%ld\n", freq, pulse_width, space_width);
+++	return 0;
+++}
+++
+++static long send_pulse_softcarrier(unsigned long length)
+++{
+++	int flag;
+++	unsigned long actual, target, d;
+++
+++	length <<= 8;
+++
+++	actual = 0; target = 0; flag = 0;
+++	while (actual < length) {
+++		if (flag) {
+++			gpio_set_value(gpio_out, 0);
+++			target += space_width;
+++		} else {
+++			gpio_set_value(gpio_out, 1);
+++			target += pulse_width;
+++		}
+++		d = (target - actual -
+++		     LIRC_TRANSMITTER_LATENCY + 128) >> 8;
+++		/*
+++		 * Note - we've checked in ioctl that the pulse/space
+++		 * widths are big enough so that d is > 0
+++		 */
+++		udelay(d);
+++		actual += (d << 8) + LIRC_TRANSMITTER_LATENCY;
+++		flag = !flag;
+++	}
+++	return (actual-length) >> 8;
+++}
+++
+++static long send_pulse(unsigned long length)
+++{
+++	if (length <= 0)
+++		return 0;
+++
+++	if (softcarrier) {
+++		return send_pulse_softcarrier(length);
+++	} else {
+++		gpio_set_value(gpio_out, 1);
+++		safe_udelay(length);
+++		return 0;
+++	}
+++}
+++
+++static void send_space(long length)
+++{
+++	gpio_set_value(gpio_out, 0);
+++	if (length <= 0)
+++		return;
+++	safe_udelay(length);
+++}
+++
+++static void rbwrite(int l)
+++{
+++	if (lirc_buffer_full(&rbuf)) {
+++		/* no new signals will be accepted */
+++		pr_debug("Buffer overrun\n");
+++		return;
+++	}
+++	lirc_buffer_write(&rbuf, (void *)&l);
+++}
+++
+++static void frbwrite(int l)
+++{
+++	/* simple noise filter */
+++	static int pulse, space;
+++	static unsigned int ptr;
+++
+++	if (ptr > 0 && (l & PULSE_BIT)) {
+++		pulse += l & PULSE_MASK;
+++		if (pulse > 250) {
+++			rbwrite(space);
+++			rbwrite(pulse | PULSE_BIT);
+++			ptr = 0;
+++			pulse = 0;
+++		}
+++		return;
+++	}
+++	if (!(l & PULSE_BIT)) {
+++		if (ptr == 0) {
+++			if (l > 20000) {
+++				space = l;
+++				ptr++;
+++				return;
+++			}
+++		} else {
+++			if (l > 20000) {
+++				space += pulse;
+++				if (space > PULSE_MASK)
+++					space = PULSE_MASK;
+++				space += l;
+++				if (space > PULSE_MASK)
+++					space = PULSE_MASK;
+++				pulse = 0;
+++				return;
+++			}
+++			rbwrite(space);
+++			rbwrite(pulse | PULSE_BIT);
+++			ptr = 0;
+++			pulse = 0;
+++		}
+++	}
+++	rbwrite(l);
+++}
+++
+++static irqreturn_t irq_handler(int i, void *blah, struct pt_regs *regs)
+++{
+++	struct timeval tv;
+++	long deltv;
+++	int data;
+++	int signal;
+++
+++	/* use the GPIO signal level */
+++	signal = gpio_get_value(gpio_in);
+++
+++	if (sense != -1) {
+++		/* get current time */
+++		do_gettimeofday(&tv);
+++
+++		/* calc time since last interrupt in microseconds */
+++		deltv = tv.tv_sec - lasttv.tv_sec;
+++		if (tv.tv_sec < lasttv.tv_sec ||
+++		    (tv.tv_sec == lasttv.tv_sec &&
+++		     tv.tv_usec < lasttv.tv_usec)) {
+++			pr_warning("AIEEE: your clock just jumped backwards\n");
+++			pr_warning("%d %d %lx %lx %lx %lx\n", signal, sense,
+++			       tv.tv_sec, lasttv.tv_sec,
+++			       tv.tv_usec, lasttv.tv_usec);
+++			data = PULSE_MASK;
+++		} else if (deltv > 15) {
+++			data = PULSE_MASK; /* really long time */
+++			if (!(signal ^ sense)) {
+++				/* sanity check */
+++				pr_warning("AIEEE: %d %d %lx %lx %lx %lx\n",
+++				       signal, sense, tv.tv_sec, lasttv.tv_sec,
+++				       tv.tv_usec, lasttv.tv_usec);
+++				/*
+++				 * detecting pulse while this
+++				 * MUST be a space!
+++				 */
+++				sense = sense ? 0 : 1;
+++			}
+++		} else {
+++			data = (int) (deltv * 1000000 +
+++				      (tv.tv_usec - lasttv.tv_usec));
+++		}
+++		frbwrite(signal ^ sense ? data : (data | PULSE_BIT));
+++		lasttv = tv;
+++		wake_up_interruptible(&rbuf.wait_poll);
+++	}
+++
+++	return IRQ_HANDLED;
+++}
+++
+++/* called when the character device is opened */
+++static int set_use_inc(void *data)
+++{
+++	/* initialize timestamp */
+++	do_gettimeofday(&lasttv);
+++
+++	/* initialize pulse/space widths */
+++	init_timing_params(duty_cycle, freq);
+++
+++	return 0;
+++}
+++
+++static void set_use_dec(void *data)
+++{
+++	/* nop */
+++}
+++
+++static ssize_t lirc_write(struct file *file, const char *buf,
+++	size_t n, loff_t *ppos)
+++{
+++	int i, count;
+++	unsigned long flags;
+++	long delta = 0;
+++	int *wbuf;
+++
+++	count = n / sizeof(int);
+++	if (n % sizeof(int) || count % 2 == 0)
+++		return -EINVAL;
+++	wbuf = memdup_user(buf, n);
+++	if (IS_ERR(wbuf))
+++		return PTR_ERR(wbuf);
+++
+++	spin_lock_irqsave(&lock, flags);
+++
+++	for (i = 0; i < count; i++) {
+++		if (i % 2)
+++			send_space(wbuf[i] - delta);
+++		else
+++			delta = send_pulse(wbuf[i]);
+++	}
+++	gpio_set_value(gpio_out, 0);
+++
+++	spin_unlock_irqrestore(&lock, flags);
+++
+++	kfree(wbuf);
+++
+++	return n;
+++}
+++
+++static long lirc_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+++{
+++	int result;
+++	__u32 value;
+++
+++	switch (cmd) {
+++	case LIRC_GET_SEND_MODE:
+++		return -ENOIOCTLCMD;
+++		break;
+++
+++	case LIRC_SET_SEND_MODE:
+++		result = get_user(value, (__u32 *) arg);
+++		if (result)
+++			return result;
+++		/* only LIRC_MODE_PULSE supported */
+++		if (value != LIRC_MODE_PULSE)
+++			return -ENOSYS;
+++		break;
+++
+++	case LIRC_GET_LENGTH:
+++		return -ENOSYS;
+++		break;
+++
+++	case LIRC_SET_SEND_DUTY_CYCLE:
+++		pr_debug("SET_SEND_DUTY_CYCLE\n");
+++		result = get_user(value, (__u32 *) arg);
+++		if (result)
+++			return result;
+++		if (value <= 0 || value > 100)
+++			return -EINVAL;
+++		return init_timing_params(value, freq);
+++		break;
+++
+++	case LIRC_SET_SEND_CARRIER:
+++		pr_debug("SET_SEND_CARRIER\n");
+++		result = get_user(value, (__u32 *) arg);
+++		if (result)
+++			return result;
+++		if (value > 500000 || value < 20000)
+++			return -EINVAL;
+++		return init_timing_params(duty_cycle, value);
+++		break;
+++
+++	default:
+++		return lirc_dev_fop_ioctl(filep, cmd, arg);
+++	}
+++	return 0;
+++}
+++
+++static const struct file_operations lirc_fops = {
+++	.owner		= THIS_MODULE,
+++	.write		= lirc_write,
+++	.unlocked_ioctl	= lirc_ioctl,
+++	.read		= lirc_dev_fop_read,
+++	.poll		= lirc_dev_fop_poll,
+++	.open		= lirc_dev_fop_open,
+++	.release	= lirc_dev_fop_close,
+++	.llseek		= no_llseek,
+++};
+++
+++static struct lirc_driver driver = {
+++	.name		= LIRC_GPIO_NAME,
+++	.minor		= -1,
+++	.code_length	= 1,
+++	.sample_rate	= 0,
+++	.data		= NULL,
+++	.add_to_buf	= NULL,
+++	.rbuf		= &rbuf,
+++	.set_use_inc	= set_use_inc,
+++	.set_use_dec	= set_use_dec,
+++	.fops		= &lirc_fops,
+++	.dev		= NULL,
+++	.owner		= THIS_MODULE,
+++};
+++
+++static struct platform_driver lirc_gpio_driver = {
+++	.driver = {
+++		.name   = LIRC_GPIO_NAME,
+++		.owner  = THIS_MODULE,
+++	},
+++};
+++
+++/*
+++ * Module stuff
+++ */
+++
+++static int __init lirc_gpio_init_module(void)
+++{
+++	int i, nlow, nhigh, irq;
+++	int ret;
+++
+++	/*
+++	 * Check for valid gpio pin numbers
+++	 */
+++
+++	ret = gpio_request(gpio_in, LIRC_GPIO_NAME " ir/in");
+++	if (ret) {
+++		pr_err("failed to request GPIO %u\n", gpio_in);
+++		return -EINVAL;
+++	}
+++
+++	ret = gpio_direction_input(gpio_in);
+++	if (ret) {
+++		pr_err("failed to set pin direction for gpio_in\n");
+++		ret = -EINVAL;
+++		goto exit_free_gpio_in;
+++	}
+++	pr_info("got GPIO %d for receiving\n", gpio_in);
+++
+++	/* Is GPIO in pin IRQ capable? */
+++	irq = gpio_to_irq(gpio_in);
+++	if (irq < 0) {
+++		pr_err("failed to map GPIO %d to IRQ\n", gpio_in);
+++		ret = -EINVAL;
+++		goto exit_free_gpio_in;
+++	}
+++
+++	ret = request_irq(irq, (irq_handler_t) irq_handler,
+++			     IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
+++			     LIRC_GPIO_NAME, (void *) 0);
+++	if (ret < 0) {
+++		pr_err("unable to request IRQ %d\n", irq);
+++		goto exit_free_gpio_in;
+++	}
+++	pr_info("got IRQ %d for GPIO %d\n", irq, gpio_in);
+++
+++	if (gpio_out >= 0) {
+++		ret = gpio_request(gpio_out, LIRC_GPIO_NAME " ir/out");
+++		if (ret) {
+++			pr_err("failed to request GPIO %u\n", gpio_out);
+++			goto exit_free_irq;
+++		}
+++
+++		ret = gpio_direction_output(gpio_out, 0);
+++		if (ret) {
+++			pr_err("failed to set pin direction for gpio_out\n");
+++			ret = -EINVAL;
+++			goto exit_free_gpio_out;
+++		}
+++		pr_info("got GPIO %d for transmitting\n", gpio_out);
+++	}
+++
+++	/* Set the sense mode */
+++	if (sense != -1) {
+++		pr_info("manually using active %s receiver on GPIO %d\n",
+++			sense ? "low" : "high", gpio_in);
+++	} else {
+++		/* wait 1/2 sec for the power supply */
+++		msleep(500);
+++
+++		/*
+++		 * probe 9 times every 0.04s, collect "votes" for
+++		 * active high/low
+++		 */
+++		nlow = 0;
+++		nhigh = 0;
+++		for (i = 0; i < 9; i++) {
+++			if (gpio_get_value(gpio_in))
+++				nlow++;
+++			else
+++				nhigh++;
+++			msleep(40);
+++		}
+++		sense = (nlow >= nhigh ? 1 : 0);
+++		pr_info("auto-detected active %s receiver on GPIO pin %d\n",
+++			sense ? "low" : "high", gpio_in);
+++	}
+++
+++	/*
+++	 * Setup the LIRC driver
+++	 */
+++
+++	ret = lirc_buffer_init(&rbuf, sizeof(int), RBUF_LEN);
+++	if (ret < 0) {
+++		pr_err("unable to init lirc buffer!\n");
+++		ret = -ENOMEM;
+++		goto exit_free_gpio_out;
+++	}
+++
+++	ret = platform_driver_register(&lirc_gpio_driver);
+++	if (ret) {
+++		pr_err("error in lirc register\n");
+++		goto exit_free_buffer;
+++	}
+++
+++	lirc_gpio_dev = platform_device_alloc(LIRC_GPIO_NAME, 0);
+++	if (!lirc_gpio_dev) {
+++		pr_err("error on platform device alloc!\n");
+++		ret = -ENOMEM;
+++		goto exit_driver_unreg;
+++	}
+++
+++	ret = platform_device_add(lirc_gpio_dev);
+++	if (ret) {
+++		pr_err("error on platform device add!\n");
+++		goto exit_device_put;
+++	}
+++
+++	driver.features = LIRC_CAN_REC_MODE2;
+++	if (gpio_out >= 0) {
+++		driver.features |= LIRC_CAN_SET_SEND_DUTY_CYCLE |
+++			  LIRC_CAN_SET_SEND_CARRIER |
+++			  LIRC_CAN_SEND_PULSE;
+++	}
+++
+++	driver.dev = &lirc_gpio_dev->dev;
+++	driver.minor = lirc_register_driver(&driver);
+++
+++	if (driver.minor < 0) {
+++		pr_err("device registration failed!");
+++		ret = -EIO;
+++		goto exit_device_put;
+++	}
+++
+++	pr_info("driver registered!\n");
+++
+++	return 0;
+++
+++exit_device_put:
+++	platform_device_put(lirc_gpio_dev);
+++exit_driver_unreg:
+++	platform_driver_unregister(&lirc_gpio_driver);
+++exit_free_buffer:
+++	lirc_buffer_free(&rbuf);
+++exit_free_gpio_out:
+++	if (gpio_out >= 0)
+++		gpio_free(gpio_out);
+++exit_free_irq:
+++	free_irq(gpio_to_irq(gpio_in), (void *) 0);
+++exit_free_gpio_in:
+++	gpio_free(gpio_in);
+++
+++	return ret;
+++}
+++
+++static void __exit lirc_gpio_exit_module(void)
+++{
+++	lirc_unregister_driver(driver.minor);
+++
+++	platform_device_unregister(lirc_gpio_dev);
+++	platform_driver_unregister(&lirc_gpio_driver);
+++
+++	lirc_buffer_free(&rbuf);
+++
+++	if (gpio_out >= 0)
+++		gpio_free(gpio_out);
+++	free_irq(gpio_to_irq(gpio_in), (void *) 0);
+++	gpio_free(gpio_in);
+++
+++	pr_info("driver removed\n");
+++}
+++
+++module_init(lirc_gpio_init_module);
+++module_exit(lirc_gpio_exit_module);
+++
+++MODULE_DESCRIPTION("Infra-red receiver and blaster driver using generic GPIOs");
+++MODULE_AUTHOR("Rodolfo Giometti <giometti@enneenne.com>");
+++MODULE_LICENSE("GPL");
++-- 
++1.9.1
++
+diff --git a/patches/defconfig b/patches/defconfig
+index 7b5ed20..92b7386 100644
+--- a/patches/defconfig
++++ b/patches/defconfig
+@@ -4290,7 +4290,18 @@ CONFIG_ZRAM=m
+ # CONFIG_SPEAKUP is not set
+ # CONFIG_TOUCHSCREEN_CLEARPAD_TM1217 is not set
+ # CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI4 is not set
+-# CONFIG_STAGING_MEDIA is not set
++CONFIG_STAGING_MEDIA=y
++# CONFIG_DVB_AS102 is not set
++# CONFIG_VIDEO_GO7007 is not set
++# CONFIG_USB_MSI3101 is not set
++CONFIG_LIRC_STAGING=y
++# CONFIG_LIRC_IGORPLUGUSB is not set
++# CONFIG_LIRC_IMON is not set
++CONFIG_LIRC_GPIO=m
++# CONFIG_LIRC_SASEM is not set
++# CONFIG_LIRC_SERIAL is not set
++# CONFIG_LIRC_SIR is not set
++# CONFIG_LIRC_ZILOG is not set
+ 
+ #
+ # Android
+-- 
+1.9.1
+

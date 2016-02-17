@@ -1,0 +1,28 @@
+table.status {
+        -moz-border-radius: 6px;
+}
+
+table.status tr.d0 td {
+        background-color: #aaaaaa;
+}
+
+table.status tr.d1 td {
+        background-color: #fefef2;
+}
+
+table.status td {
+        border: 1px solid black;
+        padding: 0.2em 2ex 0.2em 2ex;
+        color: black;
+}
+
+table.status td.alarm {
+        color: red;
+}
+
+input.set-inputbox {
+        background: white;
+        border: 1px solid blue;
+        color: blue;
+        maxlength: 6;
+}

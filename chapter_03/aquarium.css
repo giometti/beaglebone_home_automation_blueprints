@@ -1,0 +1,13 @@
+table {
+        -moz-border-radius: 6px;
+}
+
+table.widget tr td {
+        background-color: #cccccc;
+}
+
+table td.widget {
+        border: 1px solid black;
+        padding: 0.2em 2ex 0.2em 2ex;
+        color: black;
+}

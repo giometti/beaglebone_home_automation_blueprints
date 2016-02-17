@@ -1,0 +1,118 @@
+<html>
+  <head>
+    <link href="plant.css" rel="stylesheet" type="text/css">
+
+    <script src="/jquery-1.9.1.js"></script>
+
+    <script>
+      var polldata = function() {
+        $.getJSON('/handler.php', function(data) {
+          $.each(data, function(key, val) {
+            var e = document.getElementById(key);
+
+            if (e != null) {
+              if (e.type == "text")
+                e.value = val;
+              else
+                e.textContent = val;
+            }
+          });
+        });
+
+        var url = '/webcam-shot.jpg';
+        var d = new Date();
+        $('#webcam_shot').attr('src', url + '?d=' + d.getTime());
+      };
+
+      setInterval(polldata, 1000);
+    </script>
+
+    <script>
+      $(function() {
+        $('button[class="set-button"]').click(function() {
+          var id = $(this).attr("id");
+          var box = document.getElementById(id.replace('set_', 'val_'));
+  
+          $.ajax({
+            url: "/handler.php",
+            type: "POST",
+            data: "set=" + id.replace('set_', '') + "&val=" + box.value,
+            success: function() {
+              console.log('set POST success');
+            },
+            error: function() {
+              console.log('set POST error');
+            }
+          });
+        });
+      });
+    </script>
+
+    <script>
+      $(function() {
+        $('button[class="do-button"]').click(function() {
+          var id = $(this).attr("id");
+  
+          $.ajax({
+            url: "/handler.php",
+            type: "POST",
+            data: "do=" + id,
+            success: function() {
+              console.log('do POST success');
+            },
+            error: function() {
+              console.log('do POST error');
+            }
+          });
+        });
+      });
+    </script>
+  </head>
+
+  <body>
+    <h1>Plant monitor status</h1>
+
+    <h2>Internal variables</h2>
+
+    <table class="status">
+      <tr class="d0">
+        <td>Light level</td>
+	  <td><b id="lig_levl">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Internal temperature[C]</td>
+	  <td><b id="int_temp">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d0">
+        <td>External temperature[C]</td>
+        <td><b id="ext_temp">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Measured moisture</td>
+	  <td><b id="msr_mois">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d0">
+        <td>Moisture coefficient</td>
+        <td><b id="cff_mois">0</b></td>
+        <td><input id="val_cff_mois" name="val_cff_mois" class="set-inputbox">
+            <button id="set_cff_mois" class="set-button">Set</button></td>
+      </tr>
+      <tr class="d1">
+        <td>Estimated moisture</td>
+        <td><b id="est_mois">0</b></td>
+        <td></td>
+      </tr>
+    </table>
+
+    <h2>Last picture</h2>
+
+    <img id="webcam_shot" alt="Last picture">
+
+    <p><button id="post_pic" class="do-button">Post on Facebook</button></p>
+
+  </body>
+</html>

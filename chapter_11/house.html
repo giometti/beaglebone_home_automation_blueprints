@@ -1,0 +1,90 @@
+<html>
+  <head>
+    <link href="house.css" rel="stylesheet" type="text/css">
+
+    <script src="/jquery-1.9.1.js"></script>
+
+    <script>
+      var polldata = function() {
+        $.getJSON('/get', function(data) {
+          $.each(data, function(key, val) {
+            var e = document.getElementById(key);
+
+            if (e != null) {
+              if (e.type == "text")
+                e.value = val;
+              else
+                e.textContent = val;
+            }
+          });
+        });
+      };
+
+      setInterval(polldata, 1000);
+    </script>
+
+    <script>
+      $(function() {
+        $('button[class="do-button"]').click(function() {
+          var id = $(this).attr("id");
+
+          $.ajax({
+            url: "/set",
+            type: "POST",
+            data: "do=" + id,
+            success: function() {
+              console.log('do POST success');
+            },
+            error: function() {
+              console.log('do POST error');
+            }
+          });
+        });
+      });
+    </script>
+  </head>
+
+  <body>
+    <h1>Home monitor status</h1>
+
+    <h2>Internal variables</h2>
+
+    <table class="status">
+      <tr class="d0">
+        <td>Switch</td>
+	<td><b id="switch">off</b></td>
+        <td><button id="switch" class="do-button">switch</button</td>
+      </tr>
+      <tr class="d0">
+        <td>Power[KW]</td>
+	<td><b id="power">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Temperature[C]</td>
+        <td><b id="temp">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Relative Humidity[%]</td>
+        <td><b id="hum">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Luminance[lux]</td>
+        <td><b id="lum">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Battery Level[%]</td>
+        <td><b id="bat_lvl">0</b></td>
+        <td></td>
+      </tr>
+      <tr class="d1">
+        <td>Motion</td>
+	<td><b id="sensor">no</b></td>
+        <td></td>
+      </tr>
+    </table>
+  </body>
+</html>

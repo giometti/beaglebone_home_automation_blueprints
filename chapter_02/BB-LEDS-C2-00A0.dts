@@ -1,0 +1,90 @@
+/dts-v1/;
+/plugin/;
+ 
+/ {
+	compatible = "ti,beaglebone", "ti,beaglebone-black";
+
+	/* Identification string */
+	part-number = "BB-LEDS-C2-00A0";
+
+	/* The version */
+	version = "00A0";
+
+	/* Define the pins usage */
+	exclusive-use =
+		/* the pin header P8 uses */
+        	"P8.7",
+        	"P8.8",
+        	"P8.9",
+        	"P8.45",
+        	"P8.46",
+        	/* Hardware IP cores in use */
+		"timer4",
+		"timer7",
+		"timer5",
+        	"gpio2_6",
+		"gpio2_7";
+ 
+	fragment@0 {
+		target = <&am33xx_pinmux>;
+
+		__overlay__ {
+			 bb_led_pins: pinmux_bb_led_pins {
+				pinctrl-single,pins = <
+					0x90 0x37
+					0x94 0x37
+					0x9c 0x37
+					0xa0 0x37
+					0xa4 0x37
+				>;
+			 };
+		};
+	};
+ 
+	fragment@1 {
+		target = <&ocp>;
+
+		__overlay__ {
+			c2_leds {
+				compatible	= "gpio-leds";
+				pinctrl-names	= "default";
+				pinctrl-0	= <&bb_led_pins>;
+
+				white_led {
+					label	= "c2:white";
+					gpios	= <&gpio3 6 0>;
+					linux,default-trigger = "none";
+                    			default-state = "on";
+				};
+
+				yellow_led {
+					label	= "c2:yellow";
+					gpios	= <&gpio3 7 0>;
+					linux,default-trigger = "none";
+                    			default-state = "on";
+				};
+
+				red_far_led {
+					label	= "c2:red_far";
+					gpios	= <&gpio3 2 0>;
+					linux,default-trigger = "none";
+                    			default-state = "on";
+				};
+
+				red_mid_led {
+					label	= "c2:red_mid";
+					gpios	= <&gpio3 3 0>;
+					linux,default-trigger = "none";
+                    			default-state = "on";
+				};
+
+				red_near__led {
+					label	= "c2:red_near";
+					gpios	= <&gpio3 5 0>;
+					linux,default-trigger = "none";
+                    			default-state = "on";
+				};
+			};
+		};
+	};
+};

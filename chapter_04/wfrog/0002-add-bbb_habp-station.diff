@@ -1,0 +1,23 @@
+Index: wfdriver/station/__init__.py
+===================================================================
+--- wfdriver/station/__init__.py	(revision 973)
++++ wfdriver/station/__init__.py	(working copy)
+@@ -19,6 +19,7 @@
+ import yaml
+ 
+ import simulator
++import bbb_habp
+ import wmrs200
+ import wmr928nx
+ import wmr200
+@@ -66,6 +67,10 @@
+     yaml_tag = u'!ws28xx'
+ auto.stations.append(ws28xx)
+ 
++class YamlWS28xxStation(bbb_habp.BBBhabpStation, yaml.YAMLObject):
++    yaml_tag = u'!bbb_habp'
++auto.stations.append(bbb_habp)
++
+ class YamlRandomSimulator(simulator.RandomSimulator, yaml.YAMLObject):
+     yaml_tag = u'!random-simulator'
+ auto.stations.append(simulator)
